@@ -1,0 +1,16 @@
+{
+  "name": "record-able-support-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord AI support bot for the record-able Minecraft mod.",
+  "scripts": {
+    "deploy-commands": "node src/deploy-commands.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "groq-sdk": "^1.5.0"
+  }
+}
