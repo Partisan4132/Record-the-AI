@@ -5,14 +5,14 @@ import { addNote, removeNote, listNotes, buildSystemPrompt } from './knowledgeBa
 
 dotenv.config();
 
-const { DISCORD_TOKEN, GROQ_API_KEY, SUPPORT_CHANNEL_ID, GROQ_MODEL } = process.env;
+const { MTUzNjQxMjMyNDI2NzY5NjE0MQ.GDAg9C.500tA7DLYoVN5qaJBpndRLD6YDXrp7CFzZm7xc, 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, 1536410198556807349, GROQ_MODEL } = process.env;
 
-if (!DISCORD_TOKEN || !GROQ_API_KEY || !SUPPORT_CHANNEL_ID) {
+if (!MTUzNjQxMjMyNDI2NzY5NjE0MQ.GDAg9C.500tA7DLYoVN5qaJBpndRLD6YDXrp7CFzZm7xc || !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 || !1536410198556807349) {
   console.error('Missing DISCORD_TOKEN, GROQ_API_KEY, or SUPPORT_CHANNEL_ID in .env');
   process.exit(1);
 }
 
-const groq = new Groq({ apiKey: GROQ_API_KEY });
+const groq = new Groq({ apiKey: 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 });
 // Free on Groq, no credit card. Swap in .env to "openai/gpt-oss-120b" for another
 // free option, or "llama-3.1-8b-instant" if you want faster/lighter replies.
 const MODEL = GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -26,7 +26,7 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, (c) => {
-  console.log(`Logged in as ${c.user.tag}. Watching channel ${SUPPORT_CHANNEL_ID}.`);
+  console.log(`Logged in as ${c.user.tag}. Watching channel ${1536410198556807349}.`);
 });
 
 // ---------- Slash commands: managing the knowledge base ----------
@@ -68,7 +68,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // ---------- Support channel Q&A ----------
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
-  if (message.channel.id !== SUPPORT_CHANNEL_ID) return;
+  if (message.channel.id !== 1536410198556807349) return;
   if (!message.content.trim()) return;
 
   await message.channel.sendTyping();
@@ -109,4 +109,4 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-client.login(DISCORD_TOKEN);
+client.login(MTUzNjQxMjMyNDI2NzY5NjE0MQ.GDAg9C.500tA7DLYoVN5qaJBpndRLD6YDXrp7CFzZm7xc);
