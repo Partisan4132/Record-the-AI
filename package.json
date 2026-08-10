@@ -1,9 +1,9 @@
 {
-  "name": "record-able-support-bot",
+  "name": "Record the AI",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Discord AI support bot for the record-able Minecraft mod.",
+  "description": "Discord AI support bot for the Record-able Minecraft mod.",
   "scripts": {
     "deploy-commands": "node src/deploy-commands.js",
     "start": "node src/index.js"
