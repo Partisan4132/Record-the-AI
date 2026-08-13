@@ -1,7 +1,7 @@
-import { Client, GatewayIntentBits, Events } from 'discord.js';
+import { Client, GatewayIntentBits, Events, MessageFlags } from 'discord.js';
 import Groq from 'groq-sdk';
 import dotenv from 'dotenv';
-import { buildSystemPrompt, loadKnowledge } from './knowledgeBase.js';
+import { addNote, removeNote, listNotes, buildSystemPrompt, loadKnowledge } from './knowledgeBase.js';
 
 dotenv.config();
 
@@ -16,49 +16,96 @@ const client = new Client({
   ],
 });
 
-// Moderation tracking (Spam detection map: userId -> [timestamps])
+// --- CONFIGURATION ---
 const userMessages = new Map();
 const HIGH_STAFF_ROLE_ID = '1531008863350947930';
 
+// --- HELPER: SEND STRUCTURED MODERATION REPORT ---
+async function sendAutoReport(channel, targetId, reason) {
+  try {
+    await channel.send({
+      content: `🚨 **AUTOMATIC MODERATION REPORT** 🚨\n**System Action:** Auto-Flagged\n**Target:** <@${targetId}> (ID: ${targetId})\n**Reason:** ${reason}\n\n⚠️ <@&${HIGH_STAFF_ROLE_ID}> please investigate.`
+    });
+  } catch (e) {
+    console.error("Failed to send report:", e);
+  }
+}
+
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log("Bot is online with High Staff moderation active!");
+  console.log(`Logged in as ${client.user.tag}. System fully operational!`);
 });
 
+// --- SLASH COMMAND HANDLERS ---
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    if (interaction.commandName === 'addinfo') {
+      const text = interaction.options.getString('text');
+      await addNote(text, interaction.user.username);
+      await interaction.editReply({ content: `✅ **Knowledge updated instantly.** I've prioritized this info in my memory!` });
+    } 
+    else if (interaction.commandName === 'listinfo') {
+      const notes = listNotes();
+      const reply = notes.length 
+        ? notes.map(n => `**#${n.id}** (${n.author}): ${n.text.slice(0, 100)}`).join('\n') 
+        : 'No overrides found.';
+      await interaction.editReply({ content: reply.slice(0, 2000) });
+    } 
+    else if (interaction.commandName === 'removeinfo') {
+      const id = interaction.options.getInteger('id');
+      const success = await removeNote(id);
+      await interaction.editReply({ content: success ? `🗑️ Removed info #${id}.` : `❌ Info #${id} not found.` });
+    }
+    else if (interaction.commandName === 'report') {
+      const target = interaction.options.getUser('target');
+      const reason = interaction.options.getString('reason');
+      await sendAutoReport(interaction.channel, target.id, `Manual Report: ${reason} (by <@${interaction.user.id}>)`);
+      await interaction.editReply({ content: `✅ Report sent for user ${target.username}.` });
+    }
+    else if (interaction.commandName === 'test-report') {
+      await sendAutoReport(interaction.channel, interaction.user.id, "Manual System Test (Triggered by user)");
+      await interaction.editReply({ content: `✅ **Test Successful.** I have sent an automatic moderation report for you to the High Staff.` });
+    }
+  } catch (err) {
+    console.error(err);
+    await interaction.editReply({ content: '❌ Error processing command.' });
+  }
+});
+
+// --- MAIN AI CHAT & MODERATION LOGIC ---
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || message.channel.id !== SUPPORT_CHANNEL_ID || !message.content.trim()) return;
+
+  // SMART FILTER: Ignore junk under 4 characters (saves tokens)
+  if (message.content.length < 4 && !message.content.includes('?')) return;
 
   const userId = message.author.id;
   const now = Date.now();
 
-  // --- 1. SPAM DETECTION ---
+  // --- SPAM DETECTION ---
   if (!userMessages.has(userId)) userMessages.set(userId, []);
   const timestamps = userMessages.get(userId);
-  
-  // Keep only timestamps from the last 10 seconds
   const recentTimestamps = timestamps.filter(t => now - t < 10000);
   recentTimestamps.push(now);
   userMessages.set(userId, recentTimestamps);
 
-  // If user sent more than 4 messages in 10 seconds = SPAM
   if (recentTimestamps.length > 4) {
-    userMessages.set(userId, []); // Reset
-    try {
-      await message.reply(`⚠️ <@&${HIGH_STAFF_ROLE_ID}> Potential spam detected from <@${userId}>! Please check this channel.`);
-    } catch (e) {
-      console.error("Failed to send spam alert:", e);
-    }
+    userMessages.set(userId, []);
+    await sendAutoReport(message.channel, userId, "Rapid message spamming (5+ messages in 10s)");
     return;
   }
 
-  // --- 2. AI SUPPORT & RULE CHECKING ---
+  // --- AI RESPONSE ---
   await message.channel.sendTyping();
   try {
     const chat = await groq.chat.completions.create({
       messages: [
         { 
           role: 'system', 
-          content: buildSystemPrompt() + `\n\nMODERATION INSTRUCTION: Analyze if the user's message is breaking server rules (trolling, severe toxicity, abuse). If they are breaking rules, start your response with "[RULE_BROKEN]" followed by your normal helpful or sarcastic reply.` 
+          content: buildSystemPrompt() + `\n\nMODERATION INSTRUCTION: If the user is breaking rules (severe toxicity, trolling, abuse), start your response with [RULE_BROKEN].` 
         }, 
         { role: 'user', content: message.content }
       ],
@@ -67,11 +114,10 @@ client.on(Events.MessageCreate, async (message) => {
 
     let reply = chat.choices[0]?.message?.content || "";
 
-    // Check if AI flagged a rule violation
+    // Handle AI detection of rule breaking
     if (reply.startsWith('[RULE_BROKEN]')) {
       reply = reply.replace('[RULE_BROKEN]', '').trim();
-      // Append High Staff ping to the response
-      reply += `\n\n⚠️ <@&${HIGH_STAFF_ROLE_ID}> Staff attention requested regarding this behavior.`;
+      await sendAutoReport(message.channel, userId, `AI Detection: Potential rule violation in message.`);
     }
 
     if (reply) {
