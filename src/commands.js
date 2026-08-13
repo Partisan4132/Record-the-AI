@@ -1,28 +1,35 @@
-import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-
-// These three commands are restricted to members with "Manage Server" permission by
-// default (i.e. your mods/admins) since anything added here shapes what the bot tells
-// people as fact. Adjust .setDefaultMemberPermissions(...) if you want a different bar.
+import { SlashCommandBuilder } from 'discord.js';
 
 export const commands = [
   new SlashCommandBuilder()
     .setName('addinfo')
-    .setDescription("Add a fact to the support bot's knowledge base")
-    .addStringOption((opt) =>
-      opt.setName('text').setDescription('The information to add').setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .setDescription('Add high-priority info or behavior rules to the bot')
+    .addStringOption(option => 
+      option.setName('text')
+        .setDescription('The information or rule to add')
+        .setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('listinfo')
-    .setDescription('List notes that have been added to the knowledge base')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .setDescription('List all high-priority overrides'),
 
   new SlashCommandBuilder()
     .setName('removeinfo')
-    .setDescription('Remove a note from the knowledge base by ID')
-    .addIntegerOption((opt) =>
-      opt.setName('id').setDescription('The note ID — see /listinfo').setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-].map((c) => c.toJSON());
+    .setDescription('Remove a specific override by ID')
+    .addIntegerOption(option => 
+      option.setName('id')
+        .setDescription('The ID of the info to remove')
+        .setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('report')
+    .setDescription('Staff only: Report a user to High Staff')
+    .addUserOption(option => 
+      option.setName('target')
+        .setDescription('The user you are reporting')
+        .setRequired(true))
+    .addStringOption(option => 
+      option.setName('reason')
+        .setDescription('Why are you reporting them?')
+        .setRequired(true)),
+].map(command => command.toJSON());
