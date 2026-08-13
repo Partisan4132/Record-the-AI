@@ -16,18 +16,17 @@ const client = new Client({
   ],
 });
 
-// --- CONFIGURATION ---
 const userMessages = new Map();
 const HIGH_STAFF_ROLE_ID = '1531008863350947930';
-const REPORT_CHANNEL_ID = '1529063968046317630'; // Reports go here now
+const STAFF_ROLE_ID = '1528045000750010489'; 
+const REPORT_CHANNEL_ID = '1529063968046317630';
 
-// --- HELPER: SEND STRUCTURED MODERATION REPORT ---
 async function sendAutoReport(targetId, reason) {
   try {
     const reportChannel = await client.channels.fetch(REPORT_CHANNEL_ID);
     if (reportChannel) {
       await reportChannel.send({
-        content: `🚨 **AUTOMATIC MODERATION REPORT** 🚨\n**System Action:** Auto-Flagged\n**Target:** <@${targetId}> (ID: ${targetId})\n**Reason:** ${reason}\n\n⚠️ <@&${HIGH_STAFF_ROLE_ID}> please investigate.`
+        content: `🚨 **USER REPORT** 🚨\n**Target:** <@${targetId}> (ID: ${targetId})\n**Reason:** ${reason}\n\n⚠️ <@&${HIGH_STAFF_ROLE_ID}> please investigate.`
       });
     }
   } catch (e) {
@@ -37,104 +36,85 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Logged in as ${client.user.tag}. Reporting to channel ${REPORT_CHANNEL_ID}!`);
+  console.log(`Bot is online. Staff-only reporting active.`);
 });
 
-// --- SLASH COMMAND HANDLERS ---
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    if (interaction.commandName === 'addinfo') {
-      const text = interaction.options.getString('text');
-      await addNote(text, interaction.user.username);
-      await interaction.editReply({ content: `✅ **Knowledge updated instantly.** I've prioritized this info in my memory!` });
-    } 
-    else if (interaction.commandName === 'listinfo') {
-      const notes = listNotes();
-      const reply = notes.length 
-        ? notes.map(n => `**#${n.id}** (${n.author}): ${n.text.slice(0, 100)}`).join('\n') 
-        : 'No overrides found.';
-      await interaction.editReply({ content: reply.slice(0, 2000) });
-    } 
-    else if (interaction.commandName === 'removeinfo') {
-      const id = interaction.options.getInteger('id');
-      const success = await removeNote(id);
-      await interaction.editReply({ content: success ? `🗑️ Removed info #${id}.` : `❌ Info #${id} not found.` });
-    }
-    else if (interaction.commandName === 'report') {
+    if (interaction.commandName === 'report') {
+      // ONLY check the Staff Role for the /report command
+      if (!interaction.member.roles.cache.has(STAFF_ROLE_ID)) {
+        return await interaction.editReply({ content: "❌ You do not have permission to use this command." });
+      }
+
       const target = interaction.options.getUser('target');
       const reason = interaction.options.getString('reason');
-      await sendAutoReport(target.id, `Manual Report: ${reason} (by <@${interaction.user.id}>)`);
-      await interaction.editReply({ content: `✅ Report sent to the staff channel.` });
+      await sendAutoReport(target.id, `${reason} (Reported by <@${interaction.user.id}>)`);
+      await interaction.editReply({ content: `✅ Report for ${target.username} has been sent to the staff channel.` });
     }
-    else if (interaction.commandName === 'test-report') {
-      await sendAutoReport(interaction.user.id, "Manual System Test (Triggered by user)");
-      await interaction.editReply({ content: `✅ **Test Successful.** I have sent a report for you to the staff channel.` });
+    else if (interaction.commandName === 'addinfo') {
+      await addNote(interaction.options.getString('text'), interaction.user.username);
+      await interaction.editReply({ content: `✅ Knowledge updated.` });
+    }
+    else if (interaction.commandName === 'listinfo') {
+      const notes = listNotes();
+      await interaction.editReply({ content: notes.length ? notes.map(n => `#${n.id}: ${n.text}`).join('\n') : 'No overrides.' });
+    }
+    else if (interaction.commandName === 'removeinfo') {
+      const success = await removeNote(interaction.options.getInteger('id'));
+      await interaction.editReply({ content: success ? `🗑️ Removed.` : `❌ Not found.` });
     }
   } catch (err) {
     console.error(err);
-    await interaction.editReply({ content: '❌ Error processing command.' });
+    await interaction.editReply({ content: '❌ Error.' });
   }
 });
 
-// --- MAIN AI CHAT & MODERATION LOGIC ---
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || message.channel.id !== SUPPORT_CHANNEL_ID || !message.content.trim()) return;
-
-  // SMART FILTER: Ignore junk under 4 characters
   if (message.content.length < 4 && !message.content.includes('?')) return;
 
   const userId = message.author.id;
   const now = Date.now();
 
-  // --- SPAM DETECTION ---
   if (!userMessages.has(userId)) userMessages.set(userId, []);
   const timestamps = userMessages.get(userId);
-  const recentTimestamps = timestamps.filter(t => now - t < 10000);
-  recentTimestamps.push(now);
-  userMessages.set(userId, recentTimestamps);
+  const recent = timestamps.filter(t => now - t < 10000);
+  recent.push(now);
+  userMessages.set(userId, recent);
 
-  if (recentTimestamps.length > 4) {
+  if (recent.length > 4) {
     userMessages.set(userId, []);
-    await sendAutoReport(userId, "Rapid message spamming (5+ messages in 10s)");
+    await sendAutoReport(userId, "Automatic: Rapid message spamming.");
     return;
   }
 
-  // --- AI RESPONSE ---
   await message.channel.sendTyping();
   try {
     const chat = await groq.chat.completions.create({
       messages: [
-        { 
-          role: 'system', 
-          content: buildSystemPrompt() + `\n\nMODERATION INSTRUCTION: If the user is breaking rules (severe toxicity, trolling, abuse), start your response with [RULE_BROKEN].` 
-        }, 
+        { role: 'system', content: buildSystemPrompt() + `\n\nIf the user is toxic or breaking rules, start with [RULE_BROKEN].` },
         { role: 'user', content: message.content }
       ],
       model: GROQ_MODEL || 'llama-3.3-70b-versatile',
     });
 
     let reply = chat.choices[0]?.message?.content || "";
-
     if (reply.startsWith('[RULE_BROKEN]')) {
       reply = reply.replace('[RULE_BROKEN]', '').trim();
-      await sendAutoReport(userId, `AI Detection: Potential rule violation in message.`);
+      await sendAutoReport(userId, "Automatic: AI detected rule violation.");
     }
 
     if (reply) {
-      const safeReply = reply
-        .replace(/@everyone/gi, '@ everyone')
-        .replace(/@here/gi, '@ here')
-        .replace(/<@!?(\d+)>/g, '@ $1')
-        .replace(/@(\d+)/g, '@ $1');
-
-      await message.reply(safeReply.slice(0, 1900));
+      const safe = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here').replace(/<@!?(\d+)>/g, '@ $1');
+      await message.reply(safe.slice(0, 1900));
     }
   } catch (err) {
     console.error(err);
-    await message.reply("I hit a limit or error. Check the logs.");
+    await message.reply("Error. Check logs.");
   }
 });
 
