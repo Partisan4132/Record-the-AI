@@ -1,112 +1,93 @@
-import { Client, GatewayIntentBits, Events, MessageFlags } from 'discord.js';
+import { Client, GatewayIntentBits, Events } from 'discord.js';
 import Groq from 'groq-sdk';
 import dotenv from 'dotenv';
-import { addNote, removeNote, listNotes, buildSystemPrompt } from './knowledgeBase.js';
+import { buildSystemPrompt, loadKnowledge } from './knowledgeBase.js';
 
 dotenv.config();
 
-const { MTUzNjQxMjMyNDI2NzY5NjE0MQ.GDAg9C.500tA7DLYoVN5qaJBpndRLD6YDXrp7CFzZm7xc, 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, 1536410198556807349, GROQ_MODEL } = process.env;
-
-if (!MTUzNjQxMjMyNDI2NzY5NjE0MQ.GDAg9C.500tA7DLYoVN5qaJBpndRLD6YDXrp7CFzZm7xc || !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 || !1536410198556807349) {
-  console.error('Missing DISCORD_TOKEN, GROQ_API_KEY, or SUPPORT_CHANNEL_ID in .env');
-  process.exit(1);
-}
-
-const groq = new Groq({ apiKey: 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 });
-// Free on Groq, no credit card. Swap in .env to "openai/gpt-oss-120b" for another
-// free option, or "llama-3.1-8b-instant" if you want faster/lighter replies.
-const MODEL = GROQ_MODEL || 'llama-3.3-70b-versatile';
+const { DISCORD_TOKEN, GROQ_API_KEY, SUPPORT_CHANNEL_ID, GROQ_MODEL } = process.env;
+const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.MessageContent
   ],
 });
 
-client.once(Events.ClientReady, (c) => {
-  console.log(`Logged in as ${c.user.tag}. Watching channel ${1536410198556807349}.`);
+// Moderation tracking (Spam detection map: userId -> [timestamps])
+const userMessages = new Map();
+const HIGH_STAFF_ROLE_ID = '1531008863350947930';
+
+client.once(Events.ClientReady, async () => {
+  await loadKnowledge();
+  console.log("Bot is online with High Staff moderation active!");
 });
 
-// ---------- Slash commands: managing the knowledge base ----------
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (interaction.commandName === 'addinfo') {
-    const text = interaction.options.getString('text', true);
-    const entry = addNote(text, interaction.user.tag);
-    await interaction.reply({
-      content: `Added note #${entry.id}: "${entry.text}"`,
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  if (interaction.commandName === 'listinfo') {
-    const notes = listNotes();
-    const body = notes.length
-      ? notes
-          .map((n) => `#${n.id} — ${n.text} (by ${n.author}, ${n.addedAt.slice(0, 10)})`)
-          .join('\n')
-      : 'No notes added yet — the bot is running on the base knowledge file only.';
-    await interaction.reply({ content: body, flags: MessageFlags.Ephemeral });
-    return;
-  }
-
-  if (interaction.commandName === 'removeinfo') {
-    const id = interaction.options.getInteger('id', true);
-    const ok = removeNote(id);
-    await interaction.reply({
-      content: ok ? `Removed note #${id}.` : `No note with ID #${id} found. Check /listinfo.`,
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-});
-
-// ---------- Support channel Q&A ----------
 client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  if (message.channel.id !== 1536410198556807349) return;
-  if (!message.content.trim()) return;
+  if (message.author.bot || message.channel.id !== SUPPORT_CHANNEL_ID || !message.content.trim()) return;
 
+  const userId = message.author.id;
+  const now = Date.now();
+
+  // --- 1. SPAM DETECTION ---
+  if (!userMessages.has(userId)) userMessages.set(userId, []);
+  const timestamps = userMessages.get(userId);
+  
+  // Keep only timestamps from the last 10 seconds
+  const recentTimestamps = timestamps.filter(t => now - t < 10000);
+  recentTimestamps.push(now);
+  userMessages.set(userId, recentTimestamps);
+
+  // If user sent more than 4 messages in 10 seconds = SPAM
+  if (recentTimestamps.length > 4) {
+    userMessages.set(userId, []); // Reset
+    try {
+      await message.reply(`⚠️ <@&${HIGH_STAFF_ROLE_ID}> Potential spam detected from <@${userId}>! Please check this channel.`);
+    } catch (e) {
+      console.error("Failed to send spam alert:", e);
+    }
+    return;
+  }
+
+  // --- 2. AI SUPPORT & RULE CHECKING ---
   await message.channel.sendTyping();
-
   try {
-    // Pull a bit of recent history so follow-up questions have context.
-    const recent = await message.channel.messages.fetch({ limit: 6, before: message.id });
-    const history = [...recent.values()]
-      .reverse()
-      .filter((m) => m.content?.trim())
-      .map((m) => ({
-        role: m.author.bot ? 'assistant' : 'user',
-        content: m.author.bot ? m.content : `${m.author.username}: ${m.content}`,
-      }));
-
-    const completion = await groq.chat.completions.create({
-      model: MODEL,
-      max_tokens: 700,
+    const chat = await groq.chat.completions.create({
       messages: [
-        { role: 'system', content: buildSystemPrompt() },
-        ...history,
-        { role: 'user', content: `${message.author.username}: ${message.content}` },
+        { 
+          role: 'system', 
+          content: buildSystemPrompt() + `\n\nMODERATION INSTRUCTION: Analyze if the user's message is breaking server rules (trolling, severe toxicity, abuse). If they are breaking rules, start your response with "[RULE_BROKEN]" followed by your normal helpful or sarcastic reply.` 
+        }, 
+        { role: 'user', content: message.content }
       ],
+      model: GROQ_MODEL || 'llama-3.3-70b-versatile',
     });
 
-    const reply = (completion.choices[0]?.message?.content ?? '').slice(0, 1900); // Discord's message length limit is 2000 chars
+    let reply = chat.choices[0]?.message?.content || "";
 
-    if (reply) await message.reply(reply);
-  } catch (err) {
-    console.error('Error answering support question:', err);
-    if (err?.status === 429) {
-      await message.reply(
-        "I've hit the free API's rate limit for the moment — try again in a bit."
-      );
-    } else {
-      await message.reply('Sorry, I hit an error trying to answer that — try again in a moment.');
+    // Check if AI flagged a rule violation
+    if (reply.startsWith('[RULE_BROKEN]')) {
+      reply = reply.replace('[RULE_BROKEN]', '').trim();
+      // Append High Staff ping to the response
+      reply += `\n\n⚠️ <@&${HIGH_STAFF_ROLE_ID}> Staff attention requested regarding this behavior.`;
     }
+
+    if (reply) {
+      // Automatic anti-ping protection for output
+      const safeReply = reply
+        .replace(/@everyone/gi, '@ everyone')
+        .replace(/@here/gi, '@ here')
+        .replace(/<@!?(\d+)>/g, '@ $1')
+        .replace(/@(\d+)/g, '@ $1');
+
+      await message.reply(safeReply.slice(0, 1900));
+    }
+  } catch (err) {
+    console.error(err);
+    await message.reply("I hit a limit or error. Check the logs.");
   }
 });
 
-client.login(MTUzNjQxMjMyNDI2NzY5NjE0MQ.GDAg9C.500tA7DLYoVN5qaJBpndRLD6YDXrp7CFzZm7xc);
+client.login(DISCORD_TOKEN);
