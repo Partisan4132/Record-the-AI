@@ -1,70 +1,81 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MOD_INFO_PATH = path.join(__dirname, '..', 'knowledge', 'mod-info.md');
-const NOTES_PATH = path.join(__dirname, '..', 'knowledge', 'community-notes.json');
+const KNOWLEDGE_DIR = './knowledge';
+const NOTES_FILE = './knowledge/overrides.json';
 
-function loadModInfo() {
-  return fs.readFileSync(MOD_INFO_PATH, 'utf-8');
+let cachedKnowledge = "";
+let highPriorityNotes = [];
+
+// Ensure the overrides file exists
+if (!fs.existsSync(NOTES_FILE)) {
+  fs.writeFileSync(NOTES_FILE, JSON.stringify([], null, 2));
 }
 
-function loadNotes() {
-  if (!fs.existsSync(NOTES_PATH)) return [];
+export async function loadKnowledge() {
   try {
-    return JSON.parse(fs.readFileSync(NOTES_PATH, 'utf-8'));
-  } catch {
-    return [];
+    // 1. Load GitHub Files (Standard Knowledge)
+    let combined = "";
+    const files = fs.readdirSync(KNOWLEDGE_DIR);
+    
+    for (const file of files) {
+      if (file.endsWith('.md') || file.endsWith('.txt')) {
+        const content = fs.readFileSync(path.join(KNOWLEDGE_DIR, file), 'utf-8');
+        combined += `\n--- FILE: ${file} ---\n${content}\n`;
+      }
+    }
+
+    // Trim to 15,000 characters to stay under Groq free tier limits
+    cachedKnowledge = combined.slice(0, 15000);
+
+    // 2. Load High-Priority Overrides (/addinfo)
+    const data = fs.readFileSync(NOTES_FILE, 'utf-8');
+    highPriorityNotes = JSON.parse(data || '[]');
+    
+    console.log(`Knowledge base loaded. ${highPriorityNotes.length} overrides active.`);
+  } catch (err) {
+    console.error("Error loading knowledge:", err);
+    cachedKnowledge = "Error loading knowledge base.";
   }
 }
 
-function saveNotes(notes) {
-  fs.writeFileSync(NOTES_PATH, JSON.stringify(notes, null, 2));
+export function buildSystemPrompt() {
+  // We put high-priority notes AT THE BOTTOM so the AI sees them last (most important)
+  const overrides = highPriorityNotes.map(n => n.text).join('\n');
+  
+  return `You are "Record the AI," a friendly, sarcastic, and humorous support bot for the Record-able Minecraft mod.
+  
+  BASE KNOWLEDGE:
+  ${cachedKnowledge}
+  
+  HIGH-PRIORITY INSTRUCTIONS (MUST FOLLOW THESE OVER ANYTHING ELSE):
+  ${overrides}
+  
+  PERSONALITY:
+  - Be helpful but include sarcasm and humor.
+  - If a high-priority instruction contradicts the base knowledge, follow the high-priority one.
+  - Do not mention you are an AI unless asked.`;
 }
 
-/** Add a new fact to the knowledge base. Returns the created entry. */
-export function addNote(text, author) {
-  const notes = loadNotes();
-  const nextId = notes.length ? Math.max(...notes.map((n) => n.id)) + 1 : 1;
-  const entry = { id: nextId, text, author, addedAt: new Date().toISOString() };
-  notes.push(entry);
-  saveNotes(notes);
-  return entry;
+export async function addNote(text, author) {
+  const newNote = { 
+    id: highPriorityNotes.length + 1, 
+    text, 
+    author, 
+    addedAt: new Date().toISOString() 
+  };
+  highPriorityNotes.push(newNote);
+  fs.writeFileSync(NOTES_FILE, JSON.stringify(highPriorityNotes, null, 2));
+  return newNote;
 }
 
-/** Remove a note by ID. Returns true if something was removed. */
-export function removeNote(id) {
-  const notes = loadNotes();
-  const idx = notes.findIndex((n) => n.id === id);
-  if (idx === -1) return false;
-  notes.splice(idx, 1);
-  saveNotes(notes);
-  return true;
+export async function removeNote(id) {
+  const originalLength = highPriorityNotes.length;
+  highPriorityNotes = highPriorityNotes.filter(n => n.id !== id);
+  fs.writeFileSync(NOTES_FILE, JSON.stringify(highPriorityNotes, null, 2));
+  return highPriorityNotes.length !== originalLength;
 }
 
 export function listNotes() {
-  return loadNotes();
-}
-
-/** Builds the full system prompt: base docs + anything added via /addinfo. */
-export function buildSystemPrompt() {
-  const modInfo = loadModInfo();
-  const notes = loadNotes();
-
-  const notesSection = notes.length
-    ? `\n\n## Additional notes (added by mods/devs after initial setup)\n\n${notes
-        .map((n) => `- ${n.text} (added ${n.addedAt.slice(0, 10)})`)
-        .join('\n')}`
-    : '';
-
-  return `You are the support assistant for "record-able", a Fabric screen-recording mod for Minecraft: Java Edition, answering questions in this Discord server's support channel.
-
-Answer using ONLY the knowledge base below. If the answer isn't in it, say you're not sure rather than guessing, and point the user to the GitHub issues page (https://github.com/JoEusebe/record-able/issues) or the mod's Discord (https://discord.com/invite/record-able).
-
-This is a live chat channel, not a wiki page — keep answers short and practical. Use Discord markdown: backticks for settings/keybinds/commands, short bullet lists for steps.
-
-# Knowledge base
-
-${modInfo}${notesSection}`;
+  return highPriorityNotes;
 }
