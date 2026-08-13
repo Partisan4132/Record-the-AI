@@ -19,13 +19,17 @@ const client = new Client({
 // --- CONFIGURATION ---
 const userMessages = new Map();
 const HIGH_STAFF_ROLE_ID = '1531008863350947930';
+const REPORT_CHANNEL_ID = '1529063968046317630'; // Reports go here now
 
 // --- HELPER: SEND STRUCTURED MODERATION REPORT ---
-async function sendAutoReport(channel, targetId, reason) {
+async function sendAutoReport(targetId, reason) {
   try {
-    await channel.send({
-      content: `🚨 **AUTOMATIC MODERATION REPORT** 🚨\n**System Action:** Auto-Flagged\n**Target:** <@${targetId}> (ID: ${targetId})\n**Reason:** ${reason}\n\n⚠️ <@&${HIGH_STAFF_ROLE_ID}> please investigate.`
-    });
+    const reportChannel = await client.channels.fetch(REPORT_CHANNEL_ID);
+    if (reportChannel) {
+      await reportChannel.send({
+        content: `🚨 **AUTOMATIC MODERATION REPORT** 🚨\n**System Action:** Auto-Flagged\n**Target:** <@${targetId}> (ID: ${targetId})\n**Reason:** ${reason}\n\n⚠️ <@&${HIGH_STAFF_ROLE_ID}> please investigate.`
+      });
+    }
   } catch (e) {
     console.error("Failed to send report:", e);
   }
@@ -33,7 +37,7 @@ async function sendAutoReport(channel, targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Logged in as ${client.user.tag}. System fully operational!`);
+  console.log(`Logged in as ${client.user.tag}. Reporting to channel ${REPORT_CHANNEL_ID}!`);
 });
 
 // --- SLASH COMMAND HANDLERS ---
@@ -62,12 +66,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     else if (interaction.commandName === 'report') {
       const target = interaction.options.getUser('target');
       const reason = interaction.options.getString('reason');
-      await sendAutoReport(interaction.channel, target.id, `Manual Report: ${reason} (by <@${interaction.user.id}>)`);
-      await interaction.editReply({ content: `✅ Report sent for user ${target.username}.` });
+      await sendAutoReport(target.id, `Manual Report: ${reason} (by <@${interaction.user.id}>)`);
+      await interaction.editReply({ content: `✅ Report sent to the staff channel.` });
     }
     else if (interaction.commandName === 'test-report') {
-      await sendAutoReport(interaction.channel, interaction.user.id, "Manual System Test (Triggered by user)");
-      await interaction.editReply({ content: `✅ **Test Successful.** I have sent an automatic moderation report for you to the High Staff.` });
+      await sendAutoReport(interaction.user.id, "Manual System Test (Triggered by user)");
+      await interaction.editReply({ content: `✅ **Test Successful.** I have sent a report for you to the staff channel.` });
     }
   } catch (err) {
     console.error(err);
@@ -79,7 +83,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || message.channel.id !== SUPPORT_CHANNEL_ID || !message.content.trim()) return;
 
-  // SMART FILTER: Ignore junk under 4 characters (saves tokens)
+  // SMART FILTER: Ignore junk under 4 characters
   if (message.content.length < 4 && !message.content.includes('?')) return;
 
   const userId = message.author.id;
@@ -94,7 +98,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (recentTimestamps.length > 4) {
     userMessages.set(userId, []);
-    await sendAutoReport(message.channel, userId, "Rapid message spamming (5+ messages in 10s)");
+    await sendAutoReport(userId, "Rapid message spamming (5+ messages in 10s)");
     return;
   }
 
@@ -114,14 +118,12 @@ client.on(Events.MessageCreate, async (message) => {
 
     let reply = chat.choices[0]?.message?.content || "";
 
-    // Handle AI detection of rule breaking
     if (reply.startsWith('[RULE_BROKEN]')) {
       reply = reply.replace('[RULE_BROKEN]', '').trim();
-      await sendAutoReport(message.channel, userId, `AI Detection: Potential rule violation in message.`);
+      await sendAutoReport(userId, `AI Detection: Potential rule violation in message.`);
     }
 
     if (reply) {
-      // Automatic anti-ping protection for output
       const safeReply = reply
         .replace(/@everyone/gi, '@ everyone')
         .replace(/@here/gi, '@ here')
