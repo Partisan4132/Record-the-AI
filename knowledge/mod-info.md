@@ -6,7 +6,7 @@ recording directly into the game. No external recording software needed. It capt
 video and audio from the game session itself, using on-demand FFmpeg downloads instead
 of bundling binaries into the mod.
 
-- Downloads: ~6.5K
+- Downloads: ~7.1K
 - Tags: Cursed, Management, Utility
 - License: MIT
 - Source: https://github.com/JoEusebe/record-able
