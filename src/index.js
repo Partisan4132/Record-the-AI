@@ -36,7 +36,7 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Bot is online. Mentions will now resolve to names!`);
+  console.log(`Bot is online. Mentions will now resolve to Profile Names!`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -96,7 +96,7 @@ client.on(Events.MessageCreate, async (message) => {
       messages: [
         { 
           role: 'system', 
-          content: buildSystemPrompt() + `\n\nINSTRUCTION: If you mention the high-priority notes, refer to them as "Community Notes". Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
+          content: buildSystemPrompt() + `\n\nINSTRUCTION: If you mention users, use their Display Names. Refer to high-priority notes as "Community Notes". Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
         },
         { role: 'user', content: message.content }
       ],
@@ -111,8 +111,7 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (reply) {
-      // --- SUPER MENTION RESOLVER ---
-      // This catches <@12345>, <@!12345>, AND plain @12345
+      // --- PROFILE NAME RESOLVER ---
       const idRegex = /<@!?(\d+)>|@(\d{17,20})/g;
       let match;
       const idsToResolve = new Set();
@@ -123,9 +122,11 @@ client.on(Events.MessageCreate, async (message) => {
       for (const id of idsToResolve) {
         try {
           const user = await client.users.fetch(id);
+          // Use Profile Name (globalName) if available, otherwise username
+          const profileName = user.globalName || user.username;
           const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const replaceRegex = new RegExp(`(<@!?${escapedId}>|@${escapedId})`, 'g');
-          reply = reply.replace(replaceRegex, `@${user.username}`);
+          reply = reply.replace(replaceRegex, `@${profileName}`);
         } catch (e) {
           // Keep ID if user not found
         }
