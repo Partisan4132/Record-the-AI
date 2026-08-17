@@ -21,7 +21,6 @@ const HIGH_STAFF_ROLE_ID = '1531008863350947930';
 const STAFF_ROLE_ID = '1528045000750010489'; 
 const REPORT_CHANNEL_ID = '1529063968046317630';
 
-// --- ABSOLUTE AUTHORITY IDS ---
 const AUTHORIZED_USERS = ['1499890551997071431', '1423160004579426304']; 
 
 async function sendAutoReport(targetId, reason) {
@@ -39,7 +38,7 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Bot is online. Ultimate Authority and Thought-Stripping active!`);
+  console.log(`Bot is online. Using model: ${GROQ_MODEL || 'groq/compound-mini'}`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -105,13 +104,11 @@ client.on(Events.MessageCreate, async (message) => {
         },
         { role: 'user', content: message.content }
       ],
-      model: GROQ_MODEL || 'qwen/qwen3.6-27b',
+      // Hardcoded fallback to a model we KNOW you have
+      model: GROQ_MODEL || 'groq/compound-mini',
     });
 
     let reply = chat.choices[0]?.message?.content || "";
-    
-    // --- STRONGER THOUGHT STRIPPER ---
-    // This removes EVERYTHING between <think> and </think>, even if it's unclosed
     reply = reply.replace(/<think>[\s\S]*?(<\/think>|$)/gi, '').trim();
 
     if (!isOwner && reply.startsWith('[RULE_BROKEN]')) {
@@ -120,7 +117,6 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (reply) {
-      // --- BYPASS RESOLVER FOR OWNERS ---
       if (!isOwner) {
         const idRegex = /<@!?(\d+)>|@(\d{17,20})/g;
         let match;
@@ -139,7 +135,6 @@ client.on(Events.MessageCreate, async (message) => {
         }
         reply = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here');
       }
-
       await message.reply(reply.slice(0, 1900));
     }
   } catch (err) {
