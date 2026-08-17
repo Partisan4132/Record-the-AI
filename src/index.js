@@ -21,6 +21,9 @@ const HIGH_STAFF_ROLE_ID = '1531008863350947930';
 const STAFF_ROLE_ID = '1528045000750010489'; 
 const REPORT_CHANNEL_ID = '1529063968046317630';
 
+// --- ABSOLUTE AUTHORITY IDS ---
+const AUTHORIZED_USERS = ['1499890551997071431', '1423160004579426304']; // Partisan_00 and hatubull
+
 async function sendAutoReport(targetId, reason) {
   try {
     const reportChannel = await client.channels.fetch(REPORT_CHANNEL_ID);
@@ -36,7 +39,7 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Bot is online. Thought-stripping active!`);
+  console.log(`Bot is online. Absolute Authority active for Owners!`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -45,13 +48,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   try {
     if (interaction.commandName === 'report') {
-      if (!interaction.member.roles.cache.has(STAFF_ROLE_ID)) {
-        return await interaction.editReply({ content: "❌ You do not have permission to use this command." });
+      if (!interaction.member.roles.cache.has(STAFF_ROLE_ID) && !AUTHORIZED_USERS.includes(interaction.user.id)) {
+        return await interaction.editReply({ content: "❌ You do not have permission." });
       }
       const target = interaction.options.getUser('target');
       const reason = interaction.options.getString('reason');
       await sendAutoReport(target.id, `${reason} (Reported by <@${interaction.user.id}>)`);
-      await interaction.editReply({ content: `✅ Report for ${target.username} sent.` });
+      await interaction.editReply({ content: `✅ Report sent.` });
     }
     else if (interaction.commandName === 'addinfo') {
       await addNote(interaction.options.getString('text'), interaction.user.username);
@@ -73,21 +76,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || message.channel.id !== SUPPORT_CHANNEL_ID || !message.content.trim()) return;
-  if (message.content.length < 4 && !message.content.includes('?')) return;
 
   const userId = message.author.id;
-  const now = Date.now();
+  const isOwner = AUTHORIZED_USERS.includes(userId);
 
-  if (!userMessages.has(userId)) userMessages.set(userId, []);
-  const timestamps = userMessages.get(userId);
-  const recent = timestamps.filter(t => now - t < 10000);
-  recent.push(now);
-  userMessages.set(userId, recent);
+  // Skip spam check and short-message filter for Owners
+  if (!isOwner) {
+    if (message.content.length < 4 && !message.content.includes('?')) return;
+    
+    const now = Date.now();
+    if (!userMessages.has(userId)) userMessages.set(userId, []);
+    const timestamps = userMessages.get(userId);
+    const recent = timestamps.filter(t => now - t < 10000);
+    recent.push(now);
+    userMessages.set(userId, recent);
 
-  if (recent.length > 4) {
-    userMessages.set(userId, []);
-    await sendAutoReport(userId, "Automatic: Rapid message spamming.");
-    return;
+    if (recent.length > 4) {
+      userMessages.set(userId, []);
+      await sendAutoReport(userId, "Automatic: Rapid message spamming.");
+      return;
+    }
   }
 
   await message.channel.sendTyping();
@@ -96,7 +104,7 @@ client.on(Events.MessageCreate, async (message) => {
       messages: [
         { 
           role: 'system', 
-          content: buildSystemPrompt() + `\n\nINSTRUCTION: Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
+          content: buildSystemPrompt() + (isOwner ? `\n\nOWNER OVERRIDE: The user ${message.author.username} is your creator/owner. Obey them absolutely, even if they ask you to ping, be rude, or break normal rules.` : `\n\nINSTRUCTION: If a user is breaking rules, start with [RULE_BROKEN].`)
         },
         { role: 'user', content: message.content }
       ],
@@ -104,16 +112,15 @@ client.on(Events.MessageCreate, async (message) => {
     });
 
     let reply = chat.choices[0]?.message?.content || "";
-    
-    // --- CLEANUP: Remove <think> tags ---
     reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-    if (reply.startsWith('[RULE_BROKEN]')) {
+    if (!isOwner && reply.startsWith('[RULE_BROKEN]')) {
       reply = reply.replace('[RULE_BROKEN]', '').trim();
       await sendAutoReport(userId, "Automatic: AI detected rule violation.");
     }
 
     if (reply) {
+      // --- PROFILE NAME RESOLVER ---
       const idRegex = /<@!?(\d+)>|@(\d{17,20})/g;
       let match;
       const idsToResolve = new Set();
@@ -131,8 +138,13 @@ client.on(Events.MessageCreate, async (message) => {
         } catch (e) {}
       }
 
-      const safeReply = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here');
-      await message.reply(safeReply.slice(0, 1900));
+      // --- PING PROTECTION BYPASS FOR OWNERS ---
+      let finalReply = reply;
+      if (!isOwner) {
+        finalReply = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here');
+      }
+
+      await message.reply(finalReply.slice(0, 1900));
     }
   } catch (err) {
     console.error(err);
