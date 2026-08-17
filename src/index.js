@@ -36,7 +36,7 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Bot is online. Staff-only reporting active.`);
+  console.log(`Bot is online. Mentions will now resolve to names!`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -45,15 +45,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   try {
     if (interaction.commandName === 'report') {
-      // ONLY check the Staff Role for the /report command
       if (!interaction.member.roles.cache.has(STAFF_ROLE_ID)) {
         return await interaction.editReply({ content: "❌ You do not have permission to use this command." });
       }
-
       const target = interaction.options.getUser('target');
       const reason = interaction.options.getString('reason');
       await sendAutoReport(target.id, `${reason} (Reported by <@${interaction.user.id}>)`);
-      await interaction.editReply({ content: `✅ Report for ${target.username} has been sent to the staff channel.` });
+      await interaction.editReply({ content: `✅ Report for ${target.username} sent.` });
     }
     else if (interaction.commandName === 'addinfo') {
       await addNote(interaction.options.getString('text'), interaction.user.username);
@@ -96,21 +94,42 @@ client.on(Events.MessageCreate, async (message) => {
   try {
     const chat = await groq.chat.completions.create({
       messages: [
-        { role: 'system', content: buildSystemPrompt() + `\n\nIf the user is toxic or breaking rules, start with [RULE_BROKEN].` },
+        { 
+          role: 'system', 
+          content: buildSystemPrompt() + `\n\nINSTRUCTION: Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
+        },
         { role: 'user', content: message.content }
       ],
       model: GROQ_MODEL || 'llama-3.3-70b-versatile',
     });
 
     let reply = chat.choices[0]?.message?.content || "";
+    
     if (reply.startsWith('[RULE_BROKEN]')) {
       reply = reply.replace('[RULE_BROKEN]', '').trim();
       await sendAutoReport(userId, "Automatic: AI detected rule violation.");
     }
 
     if (reply) {
-      const safe = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here').replace(/<@!?(\d+)>/g, '@ $1');
-      await message.reply(safe.slice(0, 1900));
+      // --- SMART MENTION RESOLVER ---
+      // This finds <@12345> and turns it into @Partisan_00 (no ping)
+      const mentions = reply.match(/<@!?(\d+)>/g) || [];
+      for (const mention of mentions) {
+        const id = mention.match(/\d+/)[0];
+        try {
+          const user = await client.users.fetch(id);
+          reply = reply.replace(mention, `@${user.username}`);
+        } catch (e) {
+          reply = reply.replace(mention, `@${id}`);
+        }
+      }
+
+      // Final safety for mass pings
+      const safeReply = reply
+        .replace(/@everyone/gi, '@ everyone')
+        .replace(/@here/gi, '@ here');
+
+      await message.reply(safeReply.slice(0, 1900));
     }
   } catch (err) {
     console.error(err);
