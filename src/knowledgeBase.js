@@ -2,37 +2,41 @@ import fs from 'fs';
 import path from 'path';
 
 const KNOWLEDGE_DIR = './knowledge';
-const NOTES_FILE = './knowledge/overrides.json';
+const NOTES_FILE = './knowledge/community-notes.json'; // Matches your GitHub file
 
 let cachedKnowledge = "";
 let highPriorityNotes = [];
 
-// Ensure the overrides file exists
-if (!fs.existsSync(NOTES_FILE)) {
-  fs.writeFileSync(NOTES_FILE, JSON.stringify([], null, 2));
-}
-
 export async function loadKnowledge() {
   try {
-    // 1. Load GitHub Files (Standard Knowledge)
+    // 1. Load All Files in Knowledge Folder (Base Knowledge)
     let combined = "";
     const files = fs.readdirSync(KNOWLEDGE_DIR);
     
     for (const file of files) {
-      if (file.endsWith('.md') || file.endsWith('.txt')) {
-        const content = fs.readFileSync(path.join(KNOWLEDGE_DIR, file), 'utf-8');
+      // Skip the JSON file (that's for overrides) and hidden files
+      if (file === 'community-notes.json' || file.startsWith('.')) continue;
+      
+      const filePath = path.join(KNOWLEDGE_DIR, file);
+      if (fs.lstatSync(filePath).isFile()) {
+        const content = fs.readFileSync(filePath, 'utf-8');
         combined += `\n--- FILE: ${file} ---\n${content}\n`;
       }
     }
 
-    // Trim to 15,000 characters to stay under Groq free tier limits
+    // Trim to stay under Groq free tier limits
     cachedKnowledge = combined.slice(0, 15000);
 
     // 2. Load High-Priority Overrides (/addinfo)
-    const data = fs.readFileSync(NOTES_FILE, 'utf-8');
-    highPriorityNotes = JSON.parse(data || '[]');
+    if (fs.existsSync(NOTES_FILE)) {
+      const data = fs.readFileSync(NOTES_FILE, 'utf-8');
+      highPriorityNotes = JSON.parse(data || '[]');
+    } else {
+      highPriorityNotes = [];
+      fs.writeFileSync(NOTES_FILE, JSON.stringify([], null, 2));
+    }
     
-    console.log(`Knowledge base loaded. ${highPriorityNotes.length} overrides active.`);
+    console.log(`Knowledge base loaded. ${highPriorityNotes.length} high-priority notes active.`);
   } catch (err) {
     console.error("Error loading knowledge:", err);
     cachedKnowledge = "Error loading knowledge base.";
@@ -40,7 +44,6 @@ export async function loadKnowledge() {
 }
 
 export function buildSystemPrompt() {
-  // We put high-priority notes AT THE BOTTOM so the AI sees them last (most important)
   const overrides = highPriorityNotes.map(n => n.text).join('\n');
   
   return `You are "Record the AI," a friendly, sarcastic, and humorous support bot for the Record-able Minecraft mod.
@@ -48,7 +51,7 @@ export function buildSystemPrompt() {
   BASE KNOWLEDGE:
   ${cachedKnowledge}
   
-  HIGH-PRIORITY INSTRUCTIONS (MUST FOLLOW THESE OVER ANYTHING ELSE):
+  HIGH-PRIORITY INSTRUCTIONS (OVERRIDE EVERYTHING ELSE):
   ${overrides}
   
   PERSONALITY:
@@ -59,7 +62,7 @@ export function buildSystemPrompt() {
 
 export async function addNote(text, author) {
   const newNote = { 
-    id: highPriorityNotes.length + 1, 
+    id: Date.now(), // Unique ID based on time
     text, 
     author, 
     addedAt: new Date().toISOString() 
