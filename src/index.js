@@ -96,7 +96,7 @@ client.on(Events.MessageCreate, async (message) => {
       messages: [
         { 
           role: 'system', 
-          content: buildSystemPrompt() + `\n\nINSTRUCTION: Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
+          content: buildSystemPrompt() + `\n\nINSTRUCTION: If you mention the high-priority notes, refer to them as "Community Notes". Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
         },
         { role: 'user', content: message.content }
       ],
@@ -111,24 +111,27 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (reply) {
-      // --- SMART MENTION RESOLVER ---
-      // This finds <@12345> and turns it into @Partisan_00 (no ping)
-      const mentions = reply.match(/<@!?(\d+)>/g) || [];
-      for (const mention of mentions) {
-        const id = mention.match(/\d+/)[0];
+      // --- SUPER MENTION RESOLVER ---
+      // This catches <@12345>, <@!12345>, AND plain @12345
+      const idRegex = /<@!?(\d+)>|@(\d{17,20})/g;
+      let match;
+      const idsToResolve = new Set();
+      while ((match = idRegex.exec(reply)) !== null) {
+        idsToResolve.add(match[1] || match[2]);
+      }
+
+      for (const id of idsToResolve) {
         try {
           const user = await client.users.fetch(id);
-          reply = reply.replace(mention, `@${user.username}`);
+          const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const replaceRegex = new RegExp(`(<@!?${escapedId}>|@${escapedId})`, 'g');
+          reply = reply.replace(replaceRegex, `@${user.username}`);
         } catch (e) {
-          reply = reply.replace(mention, `@${id}`);
+          // Keep ID if user not found
         }
       }
 
-      // Final safety for mass pings
-      const safeReply = reply
-        .replace(/@everyone/gi, '@ everyone')
-        .replace(/@here/gi, '@ here');
-
+      const safeReply = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here');
       await message.reply(safeReply.slice(0, 1900));
     }
   } catch (err) {
