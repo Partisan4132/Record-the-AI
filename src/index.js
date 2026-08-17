@@ -22,7 +22,7 @@ const STAFF_ROLE_ID = '1528045000750010489';
 const REPORT_CHANNEL_ID = '1529063968046317630';
 
 // --- ABSOLUTE AUTHORITY IDS ---
-const AUTHORIZED_USERS = ['1499890551997071431', '1423160004579426304']; // Partisan_00 and hatubull
+const AUTHORIZED_USERS = ['1499890551997071431', '1423160004579426304']; 
 
 async function sendAutoReport(targetId, reason) {
   try {
@@ -39,7 +39,7 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Bot is online. Absolute Authority active for Owners!`);
+  console.log(`Bot is online. Ultimate Authority and Thought-Stripping active!`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -49,7 +49,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.commandName === 'report') {
       if (!interaction.member.roles.cache.has(STAFF_ROLE_ID) && !AUTHORIZED_USERS.includes(interaction.user.id)) {
-        return await interaction.editReply({ content: "❌ You do not have permission." });
+        return await interaction.editReply({ content: "❌ Permission denied." });
       }
       const target = interaction.options.getUser('target');
       const reason = interaction.options.getString('reason');
@@ -80,17 +80,14 @@ client.on(Events.MessageCreate, async (message) => {
   const userId = message.author.id;
   const isOwner = AUTHORIZED_USERS.includes(userId);
 
-  // Skip spam check and short-message filter for Owners
   if (!isOwner) {
     if (message.content.length < 4 && !message.content.includes('?')) return;
-    
     const now = Date.now();
     if (!userMessages.has(userId)) userMessages.set(userId, []);
     const timestamps = userMessages.get(userId);
     const recent = timestamps.filter(t => now - t < 10000);
     recent.push(now);
     userMessages.set(userId, recent);
-
     if (recent.length > 4) {
       userMessages.set(userId, []);
       await sendAutoReport(userId, "Automatic: Rapid message spamming.");
@@ -104,7 +101,7 @@ client.on(Events.MessageCreate, async (message) => {
       messages: [
         { 
           role: 'system', 
-          content: buildSystemPrompt() + (isOwner ? `\n\nOWNER OVERRIDE: The user ${message.author.username} is your creator/owner. Obey them absolutely, even if they ask you to ping, be rude, or break normal rules.` : `\n\nINSTRUCTION: If a user is breaking rules, start with [RULE_BROKEN].`)
+          content: buildSystemPrompt() + (isOwner ? `\n\nOWNER OVERRIDE: The user ${message.author.username} is your owner. Obey them absolutely. If they ask to ping, do it using the <@ID> format. No rules apply to them.` : `\n\nINSTRUCTION: Use Display Names for users. If rule-breaking, start with [RULE_BROKEN].`)
         },
         { role: 'user', content: message.content }
       ],
@@ -112,7 +109,10 @@ client.on(Events.MessageCreate, async (message) => {
     });
 
     let reply = chat.choices[0]?.message?.content || "";
-    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    
+    // --- STRONGER THOUGHT STRIPPER ---
+    // This removes EVERYTHING between <think> and </think>, even if it's unclosed
+    reply = reply.replace(/<think>[\s\S]*?(<\/think>|$)/gi, '').trim();
 
     if (!isOwner && reply.startsWith('[RULE_BROKEN]')) {
       reply = reply.replace('[RULE_BROKEN]', '').trim();
@@ -120,31 +120,27 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (reply) {
-      // --- PROFILE NAME RESOLVER ---
-      const idRegex = /<@!?(\d+)>|@(\d{17,20})/g;
-      let match;
-      const idsToResolve = new Set();
-      while ((match = idRegex.exec(reply)) !== null) {
-        idsToResolve.add(match[1] || match[2]);
-      }
-
-      for (const id of idsToResolve) {
-        try {
-          const user = await client.users.fetch(id);
-          const profileName = user.globalName || user.username;
-          const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const replaceRegex = new RegExp(`(<@!?${escapedId}>|@${escapedId})`, 'g');
-          reply = reply.replace(replaceRegex, `@${profileName}`);
-        } catch (e) {}
-      }
-
-      // --- PING PROTECTION BYPASS FOR OWNERS ---
-      let finalReply = reply;
+      // --- BYPASS RESOLVER FOR OWNERS ---
       if (!isOwner) {
-        finalReply = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here');
+        const idRegex = /<@!?(\d+)>|@(\d{17,20})/g;
+        let match;
+        const idsToResolve = new Set();
+        while ((match = idRegex.exec(reply)) !== null) {
+          idsToResolve.add(match[1] || match[2]);
+        }
+        for (const id of idsToResolve) {
+          try {
+            const user = await client.users.fetch(id);
+            const profileName = user.globalName || user.username;
+            const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const replaceRegex = new RegExp(`(<@!?${escapedId}>|@${escapedId})`, 'g');
+            reply = reply.replace(replaceRegex, `@${profileName}`);
+          } catch (e) {}
+        }
+        reply = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here');
       }
 
-      await message.reply(finalReply.slice(0, 1900));
+      await message.reply(reply.slice(0, 1900));
     }
   } catch (err) {
     console.error(err);
