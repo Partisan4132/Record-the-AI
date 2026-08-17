@@ -36,7 +36,7 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Bot is online. Mentions will now resolve to Profile Names!`);
+  console.log(`Bot is online. Thought-stripping active!`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -96,22 +96,24 @@ client.on(Events.MessageCreate, async (message) => {
       messages: [
         { 
           role: 'system', 
-          content: buildSystemPrompt() + `\n\nINSTRUCTION: If you mention users, use their Display Names. Refer to high-priority notes as "Community Notes". Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
+          content: buildSystemPrompt() + `\n\nINSTRUCTION: Use Discord Markdown (**bold**) instead of HTML. If a user is breaking rules, start with [RULE_BROKEN].` 
         },
         { role: 'user', content: message.content }
       ],
-      model: GROQ_MODEL || 'llama-3.3-70b-versatile',
+      model: GROQ_MODEL || 'qwen/qwen3.6-27b',
     });
 
     let reply = chat.choices[0]?.message?.content || "";
     
+    // --- CLEANUP: Remove <think> tags ---
+    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
     if (reply.startsWith('[RULE_BROKEN]')) {
       reply = reply.replace('[RULE_BROKEN]', '').trim();
       await sendAutoReport(userId, "Automatic: AI detected rule violation.");
     }
 
     if (reply) {
-      // --- PROFILE NAME RESOLVER ---
       const idRegex = /<@!?(\d+)>|@(\d{17,20})/g;
       let match;
       const idsToResolve = new Set();
@@ -122,14 +124,11 @@ client.on(Events.MessageCreate, async (message) => {
       for (const id of idsToResolve) {
         try {
           const user = await client.users.fetch(id);
-          // Use Profile Name (globalName) if available, otherwise username
           const profileName = user.globalName || user.username;
           const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const replaceRegex = new RegExp(`(<@!?${escapedId}>|@${escapedId})`, 'g');
           reply = reply.replace(replaceRegex, `@${profileName}`);
-        } catch (e) {
-          // Keep ID if user not found
-        }
+        } catch (e) {}
       }
 
       const safeReply = reply.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here');
