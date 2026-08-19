@@ -18,12 +18,10 @@ const client = new Client({
 
 const userMessages = new Map();
 const HIGH_STAFF_ROLE_ID = '1531008863350947930';
-const STAFF_ROLE_ID = '1528045000750010489'; 
+const STAFF_ROLE_ID = '1512339910122541066'; // Updated Role ID for /report permission
 const REPORT_CHANNEL_ID = '1529063968046317630';
 const AUTHORIZED_USERS = ['1499890551997071431', '1423160004579426304']; 
 
-// --- SMART FALLBACK MODELS ---
-// If one fails, the bot will automatically try the next one
 const FALLBACK_MODELS = [
   GROQ_MODEL,
   'qwen/qwen3.6-27b',
@@ -45,7 +43,7 @@ async function sendAutoReport(targetId, reason) {
 
 client.once(Events.ClientReady, async () => {
   await loadKnowledge();
-  console.log(`Bot is online. Fallback system active!`);
+  console.log(`Bot is online. Restricted /report to role ${STAFF_ROLE_ID}!`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -53,8 +51,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     if (interaction.commandName === 'report') {
+      // Check if user has the specific role OR is an authorized owner
       if (!interaction.member.roles.cache.has(STAFF_ROLE_ID) && !AUTHORIZED_USERS.includes(interaction.user.id)) {
-        return await interaction.editReply({ content: "❌ Permission denied." });
+        return await interaction.editReply({ content: "❌ You do not have permission to use this command." });
       }
       const target = interaction.options.getUser('target');
       const reason = interaction.options.getString('reason');
@@ -102,7 +101,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   await message.channel.sendTyping();
 
-  // --- BULLETPROOF AI CALL WITH FALLBACKS ---
   let chat = null;
   let lastError = null;
 
@@ -118,7 +116,7 @@ client.on(Events.MessageCreate, async (message) => {
         ],
         model: modelName,
       });
-      if (chat) break; // If it worked, stop trying other models
+      if (chat) break;
     } catch (err) {
       console.warn(`Model ${modelName} failed, trying next...`);
       lastError = err;
@@ -127,7 +125,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!chat) {
     console.error("ALL MODELS FAILED:", lastError);
-    return await message.reply("⚠️ All AI models are currently unavailable. Please check your Groq API key or billing.");
+    return await message.reply("⚠️ AI service unavailable. Check logs.");
   }
 
   try {
